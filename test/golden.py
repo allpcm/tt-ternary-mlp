@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+Golden model + test-vector generator for tt_um_pcm_ternary_mlp.
+
+This is the reference implementation the RTL is checked against, bit for bit.
+It is deliberately written in plain integer arithmetic with no numpy, so a
+student can read it beside the Verilog and see the same operation twice.
+
+Emits:
+  weights.bits  - NSETS * 320 lines, one bit each, in serial shift order
+  vectors.bits  - NSETS * NVEC  lines, 18 bits each: {x[15:0], class[1:0]}
+  summary.txt   - human-readable record of what was generated
+"""
+
+import random
+
+N_IN, N_HID, N_OUT = 16, 8, 4
+W1_BITS = N_IN * N_HID * 2      # 256
+W2_BITS = N_HID * N_OUT * 2     # 64
+W_BITS = W1_BITS + W2_BITS      # 320
+
+NSETS = 5       # independent random weight sets
+NVEC = 20       # input vectors per weight set
+SEED = 20261130  # the submission deadline, because why not
+
+random.seed(SEED)
+
+
+def ternary():
+    """Draw a weight from {-1, 0, +1}, matching a trained sparse ternary net."""
+    r = random.random()
+    if r < 0.35:
+        return 0
+    return 1 if random.random() < 0.5 else -1
+
+
+def encode(w):
+    """Ternary value -> (nz, sgn) as the RTL expects. bit0=sgn, bit1=nz."""
+    if w == 0:
+        return 0, 0
+    return 1, (1 if w < 0 else 0)
+
+
+def infer(w1, w2, x):
+    """
+    Reference forward pass.
+      acc1[j] = sum_i x[i] * w1[i][j]
+      hid[j]  = 1 if acc1[j] > 0 else 0
+      acc2[m] = sum_k hid[k] * w2[k][m]
+      class   = argmax(acc2), ties to lowest index
+    """
+    acc1 = [0] * N_HID
+    for i in range(N_IN):
+        if x[i]:
+            for j in range(N_HID):
+                acc1[j] += w1[i][j]
+
+    hid = [1 if a > 0 else 0 for a in acc1]
+
+    acc2 = [0] * N_OUT
+    for k in range(N_HID):
+        if hid[k]:
+            for m in range(N_OUT):
+                acc2[m] += w2[k][m]
+
+    best = 0
+    for m in range(1, N_OUT):
+        if acc2[m] > acc2[best]:
+            best = m
+    return best, acc1, acc2
+
+
+def pack(w1, w2):
+    """
+    Build the 320-bit wmem image.
+      wmem[i*16 + j*2 +: 2]           = layer-1 weight (i,j)
+      wmem[256 + k*8 + m*2 +: 2]      = layer-2 weight (k,m)
+    """
+    bits = [0] * W_BITS
+    for i in range(N_IN):
+        for j in range(N_HID):
+            nz, sgn = encode(w1[i][j])
+            off = i * (N_HID * 2) + j * 2
+            bits[off] = sgn
+            bits[off + 1] = nz
+    for k in range(N_HID):
+        for m in range(N_OUT):
+            nz, sgn = encode(w2[k][m])
+            off = W1_BITS + k * (N_OUT * 2) + m * 2
+            bits[off] = sgn
+            bits[off + 1] = nz
+    return bits
+
+
+def main():
+    wlines, vlines, notes = [], [], []
+
+    for s in range(NSETS):
+        w1 = [[ternary() for _ in range(N_HID)] for _ in range(N_IN)]
+        w2 = [[ternary() for _ in range(N_OUT)] for _ in range(N_HID)]
+
+        # Serial order: the shift register is {wmem[W-2:0], w_data}, so the
+        # first bit clocked in ends up at wmem[W-1]. Emit MSB first.
+        bits = pack(w1, w2)
+        wlines.extend(str(bits[b]) for b in range(W_BITS - 1, -1, -1))
+
+        counts = [0] * N_OUT
+        for v in range(NVEC):
+            # Mix densities so we exercise near-zero and saturated accumulators.
+            density = [0.15, 0.5, 0.85][v % 3]
+            x = [1 if random.random() < density else 0 for _ in range(N_IN)]
+            cls, acc1, acc2 = infer(w1, w2, x)
+            counts[cls] += 1
+
+            # x[i] is input i; emit as a 16-bit field with x[15] leftmost.
+            xstr = "".join(str(x[i]) for i in range(N_IN - 1, -1, -1))
+            vlines.append(f"{xstr}{cls:02b}")
+
+        notes.append(f"set {s}: class distribution {counts}")
+
+    with open("weights.bits", "w") as f:
+        f.write("\n".join(wlines) + "\n")
+    with open("vectors.bits", "w") as f:
+        f.write("\n".join(vlines) + "\n")
+    with open("summary.txt", "w") as f:
+        f.write(f"seed={SEED} sets={NSETS} vectors_per_set={NVEC} "
+                f"total={NSETS * NVEC}\n")
+        f.write("\n".join(notes) + "\n")
+
+    print(f"wrote {len(wlines)} weight bits, {len(vlines)} vectors "
+          f"({NSETS} sets x {NVEC})")
+    for n in notes:
+        print("  " + n)
+
+
+if __name__ == "__main__":
+    main()
