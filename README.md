@@ -130,6 +130,38 @@ python3 tools/gl_toggle_report.py tb.real.vcd
 The CI artifact named `tb.vcd` is actually FST, because the test Makefile passes
 `-fst`. Convert it first.
 
+## Using it from a microcontroller
+
+The tile is a peripheral, not a system. It has no clock generator and no boot
+sequence — a host drives `clk`, holds the reset, shifts in the weights, feeds an
+activation vector and reads back a class. That makes it a clean target for an
+Arduino, a Pico, or the RP2040 already on the Tiny Tapeout demo board.
+
+The host loop is four steps and no interrupts:
+
+1. hold `rst_n` low for a few clocks, release
+2. clock in 320 weight bits on `uio[1]` with `uio[0]` high, MSB first
+3. write the activation high byte then low byte on `ui[7:0]` with `uio[3]` high
+4. pulse `uio[2]`, clock 26 times, read the class from `uio[7:6]`
+
+Because the host supplies the clock, it can run the chip arbitrarily slowly —
+or single-step it — which makes the internal state observable on a logic
+analyzer or just an LED. A student can watch `busy` rise, count 26 clocks, and
+see `done` go high.
+
+**Budget about 17 I/O lines**: `clk`, `rst_n`, eight activation bits, four
+control bits, and three to read back. An Uno has roughly that many only if you
+sacrifice D0/D1, which costs you USB serial for debugging — a Mega, Nano Every
+or Pico is the comfortable choice.
+
+### The same code drives an FPGA
+
+`src/tt_um_pcm_ternary_mlp.v` is ordinary portable Verilog. It synthesizes for a
+Spartan-7 in Vivado with no changes, so the identical host sketch can talk to an
+FPGA board today and to the fabricated tile when silicon returns. The wiring and
+the protocol are the constant; only what sits on the other end of the ribbon
+cable changes.
+
 ## Layout
 
 ```
