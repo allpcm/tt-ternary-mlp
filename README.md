@@ -65,13 +65,51 @@ hold buffers and 645 timing-repair buffers were inserted:
 Zero of 2,965,513 inference-phase bit-toggles are in the weight register — 320 of
 the design's 419 flip-flops, roughly 6,800 µm², completely static during compute.
 
-Two honest qualifications. `w1_row` and `w2_row` still toggle during inference;
-those are the combinational muxes *reading* rows out of the register, so the
-storage is static but the read path is not. And **absolute power in milliwatts is
-not yet measured** — `tools/power.tcl` is written and waiting on an annotated
-OpenSTA run. LibreLane's own `power__total` metric assumes default switching
-activity and is meaningless for a design whose largest register never toggles;
-it is deliberately not quoted here.
+One qualification: `w1_row` and `w2_row` still toggle during inference. Those are
+the combinational muxes *reading* rows out of the register, so the storage is
+static but the read path is not.
+
+### Power — and why a static register is not a free one
+
+Annotated OpenSTA, activity taken from the real vector set rather than a default
+switching factor (`tools/power.tcl`, build with `tools/build_opensta_power.sh`):
+
+| group | internal | switching | leakage | total | |
+|---|---|---|---|---|---|
+| Sequential | 873.5 µW | 14.5 µW | 3.6 nW | 887.9 µW | 52.1% |
+| Combinational | 219.9 µW | 107.7 µW | 8.5 nW | 327.7 µW | 19.2% |
+| Clock | 314.1 µW | 175.8 µW | 33.8 nW | 489.9 µW | 28.7% |
+| **Total** | **1407.5 µW** | **298.1 µW** | **45.9 nW** | **1705.6 µW** | |
+| | 82.5% | 17.5% | 0.0% | | |
+
+**1.706 mW**, averaged across the full run — about 1,600 cycles of weight shifting
+and 2,600 cycles of inference, so this is not an inference-only figure. At 26
+cycles and 50 MHz, a classification takes 520 ns, which puts energy per inference
+at roughly 0.9 nJ using run-average power. Treat that as approximate until someone
+windows the VCD to the compute phase.
+
+The result worth paying attention to is the split: **82.5% of the power is
+internal, only 17.5% is switching.** The weight register contributes essentially
+nothing to switching — sequential switching is 14.5 µW across all 419 flip-flops —
+and the design still draws 1.7 mW.
+
+A flip-flop burns internal power every time its *clock* pin toggles, whether or
+not `D` changes. There is not one clock-gating cell in this netlist; all 419
+flip-flops are free-running. So the 320 weight flip-flops sit perfectly still,
+data-wise, and are still clocked 50 million times a second.
+
+**Zero data toggles is not zero power.** That is the honest lesson here, and it is
+more useful than the one this design was built to show.
+
+It also names the next optimization. The weight register needs a clock only during
+its 320-cycle load phase; gating it during inference should recover something on
+the order of 0.6–0.9 mW of the 1.7 mW — an estimate from flop-count proportion,
+not a measurement, since the clock tree would not disappear entirely.
+
+For the record, LibreLane's default-activity `power__total` for this design is
+1.864 mW, within 9% of the annotated figure. The annotated number is still the one
+to quote, but the gap is far smaller than the zero-toggle result would lead you to
+expect — for exactly the reason above.
 
 ### What the demonstration network achieves
 

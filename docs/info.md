@@ -40,6 +40,29 @@ waits on a memory access, because there is no memory access.
 
 26 cycles total. At 50 MHz that is 520 ns per inference.
 
+### Measured power
+
+Annotated OpenSTA against the real vector set, sky130A, tt 25 °C 1.80 V:
+
+| group | total | share |
+|---|---|---|
+| Sequential | 887.9 µW | 52.1% |
+| Clock | 489.9 µW | 28.7% |
+| Combinational | 327.7 µW | 19.2% |
+| **Total** | **1.706 mW** | |
+
+82.5% of that is internal power, 17.5% switching, leakage negligible at 46 nW.
+The figure averages the whole test — roughly 1,600 cycles of weight shifting and
+2,600 of inference — so it is not inference-only. At 520 ns per classification,
+energy per inference is approximately 0.9 nJ.
+
+The weight register holds all 320 of its bits static through inference and
+contributes no switching power, yet the design still draws 1.7 mW, because every
+one of the 419 flip-flops is clocked each cycle and a flip-flop dissipates
+internal power on a clock edge regardless of whether its input changed. The
+netlist contains no clock-gating cells. Gating the weight register outside its
+load phase is the obvious next saving and is not implemented here.
+
 ## How to test
 
 1. Assert `rst_n` low for several cycles, then release.

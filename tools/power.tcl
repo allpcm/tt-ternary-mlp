@@ -1,47 +1,51 @@
 # Annotated power for tt_um_pcm_ternary_mlp.
 #
-# Reports power under the REAL vector set rather than a 0.5 default activity
-# factor. That distinction is the whole point: this design's weight register
-# is 320 of its 419 flip-flops and never toggles during inference, so a
-# default-activity estimate overstates it badly. LibreLane's own
-# power__total metric (1.86 mW) is exactly such an estimate - do not quote it.
+# Reports power under the REAL vector set rather than a default activity
+# factor. Build OpenSTA and run this end-to-end with:
 #
-# Needs OpenSTA plus the sky130 liberty files, which are not in the
-# tt_submission artifact. Easiest source is the LibreLane container, which
-# already has both:
+#     bash tools/build_opensta_power.sh
 #
-#   docker run --rm -it -v "$PWD":/work -w /work \
-#     ghcr.io/librelane/librelane:latest \
-#     sta -no_splash tools/power.tcl
+# which compiles CUDD and OpenSTA from source, fetches the sky130 liberty
+# files at the exact open_pdks hash this design was built with, writes this
+# file with the discovered paths, and runs it.
 #
-# Inputs expected in the working directory:
-#   gl/tt_um_pcm_ternary_mlp.v   gate-level netlist (tt_submission/)
-#   gl/tt_um_pcm_ternary_mlp.sdc constraints        (GDS_logs run dir)
-#   gl/tb.vcd                    activity dump      (gatelevel_test_results/)
+# Inputs, all from one CI run so they describe the same netlist:
+#   gl/tt_um_pcm_ternary_mlp.v     gate netlist   (tt_submission/)
+#   gl/tt_um_pcm_ternary_mlp.sdc   constraints    (GDS_logs .../final/sdc/)
+#   gl/tb.real.vcd                 activity       (gatelevel_test_results/)
 #
-# The shipped tb.vcd is FST despite the name, because the test Makefile
-# passes -fst. Convert it first, or regenerate a true VCD:
-#   fst2vcd gl/tb.vcd -o gl/tb.real.vcd
-#   # or: cd test && make clean && make GATES=yes FST=
+# The gl_test artifact named tb.vcd is FST, because the test Makefile passes
+# -fst. Convert it first: fst2vcd tb.fst -o tb.real.vcd
+#
+# Result on run 40146396240 (sky130A, tt 25C 1v80):
+#
+#   Sequential      887.9 uW   52.1%
+#   Clock           489.9 uW   28.7%
+#   Combinational   327.7 uW   19.2%
+#   Total          1705.6 uW          (82.5% internal, 17.5% switching)
+#
+# Read that split before quoting the total. The weight register holds 320
+# bits static through inference and contributes no switching power, yet the
+# design still draws 1.7 mW: every one of the 419 flip-flops is clocked each
+# cycle, and a flip-flop dissipates internal power on a clock edge whether or
+# not D changed. There is no clock-gating cell in the netlist. Zero data
+# toggles is not zero power.
+#
+# The total averages the whole run (~1,600 cycles of weight load, ~2,600 of
+# inference), so it is not an inference-only figure.
 
-set pdk_lib $::env(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/lib
-set corner  sky130_fd_sc_hd__tt_025C_1v80.lib
-
-read_liberty $pdk_lib/$corner
+read_liberty LIBERTY_PATH
 read_verilog gl/tt_um_pcm_ternary_mlp.v
-link_design  tt_um_pcm_ternary_mlp
-read_sdc     gl/tt_um_pcm_ternary_mlp.sdc
+link_design tt_um_pcm_ternary_mlp
+read_sdc gl/tt_um_pcm_ternary_mlp.sdc
 
-# Scope must name the DUT instance inside the testbench, not the testbench.
-# In test/tb.v the instance is `user_project`, so the scope is tb/user_project.
+# The DUT instance inside the testbench is tb/user_project (see test/tb.v).
 read_vcd -scope tb/user_project gl/tb.real.vcd
 
-puts "\n=== power, annotated from the cocotb vector set ==="
-report_power
+puts "\n########## ANNOTATED POWER ##########"
+report_power -digits 4
 
-puts "\n=== power by hierarchy ==="
-report_power -instances [get_cells *]
-
-puts "\n=== timing sanity, should match the LibreLane run ==="
+puts "\n########## TIMING SANITY ##########"
 report_checks -path_delay max -digits 3
 report_checks -path_delay min -digits 3
+exit
