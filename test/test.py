@@ -143,6 +143,77 @@ def make_vectors():
     return sets
 
 
+def make_trained_vectors():
+    """
+    The trained glyph classifier: four clean prototypes, every single-pixel
+    corruption of each, and a deterministic sample of two-pixel corruptions.
+
+    Labels come from G.infer on the TRAINED weights, not from the glyph the
+    pixels were corrupted from. That distinction matters. The network is
+    97.7% accurate at three flipped pixels, so some corrupted inputs are
+    genuinely misclassified *by the network* - and the silicon is required to
+    reproduce that misclassification exactly. Checking against the intended
+    glyph instead would turn model error into a hardware failure, which is a
+    different thing and not what this bench is for.
+    """
+    bits = G.pack(G.TRAINED_W1, G.TRAINED_W2)
+    rnd = random.Random(G.SEED ^ 0xA5A5)
+    xs = []
+
+    for c in range(G.N_OUT):
+        xs.append(G.glyph_x(c))                       # clean prototype
+
+    for c in range(G.N_OUT):                          # all 16 single flips
+        for i in range(G.N_IN):
+            x = G.glyph_x(c)
+            x[i] ^= 1
+            xs.append(x)
+
+    for c in range(G.N_OUT):                          # 8 double flips each
+        for _ in range(8):
+            x = G.glyph_x(c)
+            for i in rnd.sample(range(G.N_IN), 2):
+                x[i] ^= 1
+            xs.append(x)
+
+    vecs = []
+    for x in xs:
+        cls, _, _ = G.infer(G.TRAINED_W1, G.TRAINED_W2, x)
+        vecs.append((sum(x[i] << i for i in range(G.N_IN)), cls))
+    return bits, vecs
+
+
+@cocotb.test()
+async def test_trained_glyphs(dut):
+    """The weights that actually ship. Also asserts the four clean prototypes
+    classify correctly, which is a claim about the trained network and not
+    merely about the datapath."""
+    cocotb.start_soon(_clock(dut).start())
+
+    bits, vecs = make_trained_vectors()
+    dut._log.info(f"trained glyph classifier: {len(vecs)} vectors "
+                  f"(4 clean, 64 single-flip, 32 double-flip)")
+
+    await reset(dut)
+    await load_weights(dut, bits)
+
+    latencies = set()
+    for v, (x16, expect) in enumerate(vecs):
+        await load_input(dut, x16)
+        latencies.add(await run_inference(dut))
+        got = field(dut.uio_out, 7, 6)
+        assert got == expect, (
+            f"trained vec {v}: x=0x{x16:04x} expected class {expect}, got {got}")
+
+        if v < G.N_OUT:                     # the clean prototypes lead the list
+            assert got == v, (
+                f"clean prototype {G.GLYPHS[v][0]} classified as {got}, not {v}")
+
+    assert latencies == {26}, f"latency not fixed at 26 cycles: {sorted(latencies)}"
+    dut._log.info(f"{len(vecs)}/{len(vecs)} trained vectors match, "
+                  f"4/4 clean prototypes correct, latency fixed at 26 cycles")
+
+
 @cocotb.test()
 async def test_ternary_mlp(dut):
     cocotb.start_soon(_clock(dut).start())

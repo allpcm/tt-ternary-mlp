@@ -38,6 +38,16 @@ module tt_um_pcm_ternary_mlp (
     localparam N_IN    = 16;
     localparam N_HID   = 8;
     localparam N_OUT   = 4;
+    // Terminal counts for `step`, which is 4 bits wide. Written as sized
+    // literals so the comparisons below are 4-bit on both sides: an
+    // unsized (N_IN - 1) is a 32-bit expression and trips WIDTHEXPAND,
+    // while assigning it to a [3:0] localparam trips WIDTHTRUNC.
+    // INVARIANT: LAST_IN == N_IN-1 and LAST_HID == N_HID-1, and both
+    // must fit in 4 bits. Raising N_IN past 16 means widening `step`
+    // first, or the counter wraps and the FSM never leaves S_LAYER1.
+    // The cocotb bench catches that immediately: latency stops being 26.
+    localparam [3:0] LAST_IN  = 4'd15;       // N_IN  - 1
+    localparam [3:0] LAST_HID = 4'd7;        // N_HID - 1
     localparam ACC1_W  = 6;                     // signed, holds -16..+16
     localparam ACC2_W  = 5;                     // signed, holds  -8..+8
     localparam W1_BITS = N_IN  * N_HID * 2;     // 256
@@ -164,7 +174,7 @@ module tt_um_pcm_ternary_mlp (
                     end
                 end
                 S_L1: begin
-                    if (step == N_IN - 1) begin
+                    if (step == LAST_IN) begin
                         state <= S_ACT;
                         step  <= 4'd0;
                     end else begin
@@ -176,7 +186,7 @@ module tt_um_pcm_ternary_mlp (
                     step  <= 4'd0;
                 end
                 S_L2: begin
-                    if (step == N_HID - 1) begin
+                    if (step == LAST_HID) begin
                         state <= S_IDLE;
                         done  <= 1'b1;
                     end else begin
