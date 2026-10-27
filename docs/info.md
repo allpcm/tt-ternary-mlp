@@ -40,6 +40,27 @@ waits on a memory access, because there is no memory access.
 
 26 cycles total. At 50 MHz that is 520 ns per inference.
 
+### Measured build
+
+CI run 40150872179, LibreLane 3.0.14, sky130A, open_pdks 8afc834.
+
+| | |
+|---|---|
+| Synthesis | 1,834 cells, 22,700 µm² |
+| Post-PnR standard cells | 3,587 instances, 31,266 µm² |
+| Die area (2×2) / utilization | 75,602 µm² / 41.4% |
+| Flip-flops | 419, of which 320 are the weight register |
+| Worst setup slack | 6.58 ns of 20 ns (ss, 100 °C, 1.60 V) |
+| Worst hold slack | +0.106 ns (ff, −40 °C, 1.95 V) |
+| Setup/hold TNS, WNS | 0.0 at every corner |
+| DRC route / magic | 0 / 0 |
+| Tiny Tapeout precheck | 15 / 15 |
+| Verilator `-Wall`, inferred latches | clean, 0 |
+
+Of the 8,912 µm² of sequential area, roughly 6,800 µm² is the 320-bit weight
+register — about 76% of all flip-flop area, holding data that does not change
+while the tile computes.
+
 ### Measured power
 
 Annotated OpenSTA against the real vector set, sky130A, tt 25 °C 1.80 V:
